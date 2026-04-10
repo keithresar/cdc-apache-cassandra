@@ -22,11 +22,15 @@ include 'agent-c3'
 
 include 'agent-c4'
 
+include 'agent-c4-kafka'
+
 if (startParameter.projectProperties.containsKey("dse4")) {
     include 'agent-dse4'
+    include 'agent-dse4-kafka'
 }
 if (startParameter.projectProperties.containsKey("hcd")) {
     include 'agent-hcd'
+    include 'agent-hcd-kafka'
 }
 include 'agent-distribution'
 

@@ -14,7 +14,9 @@ dependencies {
     testImplementation("org.junit-pioneer:junit-pioneer:1.4.2")
     testImplementation "com.datastax.oss:dsbulk-tests:${dsbulkVersion}"
 
-    implementation("${pulsarGroup}:pulsar-client:${pulsarVersion}")
+    compileOnly("${pulsarGroup}:pulsar-client:${pulsarVersion}")
+    compileOnly("org.apache.kafka:kafka-clients:${kafkaVersion}")
+    compileOnly("io.confluent:kafka-avro-serializer:${confluentVersion}")
 }
 
 test {

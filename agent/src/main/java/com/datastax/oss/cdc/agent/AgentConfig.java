@@ -35,7 +35,7 @@ public class AgentConfig {
     public static final String storageDir = System.getProperty("cassandra.storagedir", null);
 
     public enum Platform {
-        ALL, PULSAR
+        ALL, PULSAR, KAFKA
     }
 
     @AllArgsConstructor
@@ -321,6 +321,143 @@ public class AgentConfig {
                     null, "CDC_PULSAR_AUTH_PARAMS", Setting::getEnvAsString,
                     "String", "pulsar", 7);
 
+    // Kafka settings
+    public static final String KAFKA_BOOTSTRAP_SERVERS = "kafkaBootstrapServers";
+    public String kafkaBootstrapServers;
+    public static final Setting<String> KAFKA_BOOTSTRAP_SERVERS_SETTING =
+            new Setting<>(KAFKA_BOOTSTRAP_SERVERS, Platform.KAFKA, (c, s) -> c.kafkaBootstrapServers = s, c -> c.kafkaBootstrapServers,
+                    "A comma-separated list of Kafka broker addresses (host:port).",
+                    "localhost:9092", "CDC_KAFKA_BOOTSTRAP_SERVERS", Setting::getEnvAsString,
+                    "String", "kafka", 1);
+
+    public static final String SCHEMA_REGISTRY_URL = "schemaRegistryUrl";
+    public String schemaRegistryUrl;
+    public static final Setting<String> SCHEMA_REGISTRY_URL_SETTING =
+            new Setting<>(SCHEMA_REGISTRY_URL, Platform.KAFKA, (c, s) -> c.schemaRegistryUrl = s, c -> c.schemaRegistryUrl,
+                    "URL of the Confluent-compatible Avro Schema Registry. Comma-separated list for HA.",
+                    "http://localhost:8081", "CDC_SCHEMA_REGISTRY_URL", Setting::getEnvAsString,
+                    "String", "kafka", 2);
+
+    public static final String KAFKA_SECURITY_PROTOCOL = "kafkaSecurityProtocol";
+    public String kafkaSecurityProtocol;
+    public static final Setting<String> KAFKA_SECURITY_PROTOCOL_SETTING =
+            new Setting<>(KAFKA_SECURITY_PROTOCOL, Platform.KAFKA, (c, s) -> c.kafkaSecurityProtocol = s, c -> c.kafkaSecurityProtocol,
+                    "Kafka security protocol. One of: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL.",
+                    "PLAINTEXT", "CDC_KAFKA_SECURITY_PROTOCOL", Setting::getEnvAsString,
+                    "String", "kafka", 3);
+
+    public static final String KAFKA_SASL_MECHANISM = "kafkaSaslMechanism";
+    public String kafkaSaslMechanism;
+    public static final Setting<String> KAFKA_SASL_MECHANISM_SETTING =
+            new Setting<>(KAFKA_SASL_MECHANISM, Platform.KAFKA, (c, s) -> c.kafkaSaslMechanism = s, c -> c.kafkaSaslMechanism,
+                    "SASL mechanism for Kafka authentication. E.g., PLAIN, SCRAM-SHA-256, OAUTHBEARER.",
+                    null, "CDC_KAFKA_SASL_MECHANISM", Setting::getEnvAsString,
+                    "String", "kafka", 4);
+
+    public static final String KAFKA_SASL_JAAS_CONFIG = "kafkaSaslJaasConfig";
+    public String kafkaSaslJaasConfig;
+    public static final Setting<String> KAFKA_SASL_JAAS_CONFIG_SETTING =
+            new Setting<>(KAFKA_SASL_JAAS_CONFIG, Platform.KAFKA, (c, s) -> c.kafkaSaslJaasConfig = s, c -> c.kafkaSaslJaasConfig,
+                    "Full JAAS config string for Kafka SASL authentication.",
+                    null, "CDC_KAFKA_SASL_JAAS_CONFIG", Setting::getEnvAsString,
+                    "String", "kafka", 5);
+
+    public static final String KAFKA_ACKS = "kafkaAcks";
+    public String kafkaAcks;
+    public static final Setting<String> KAFKA_ACKS_SETTING =
+            new Setting<>(KAFKA_ACKS, Platform.KAFKA, (c, s) -> c.kafkaAcks = s, c -> c.kafkaAcks,
+                    "Kafka producer acknowledgement mode. One of: 0, 1, all.",
+                    "all", "CDC_KAFKA_ACKS", Setting::getEnvAsString,
+                    "String", "kafka", 6);
+
+    public static final String KAFKA_LINGER_MS = "kafkaLingerMs";
+    public long kafkaLingerMs;
+    public static final Setting<Long> KAFKA_LINGER_MS_SETTING =
+            new Setting<>(KAFKA_LINGER_MS, Platform.KAFKA, (c, s) -> c.kafkaLingerMs = Long.parseLong(s), c -> c.kafkaLingerMs,
+                    "Kafka producer batching linger time in milliseconds. Batching is disabled when this value is less than or equal to zero.",
+                    -1L, "CDC_KAFKA_LINGER_MS", Setting::getEnvAsLong,
+                    "Long", "kafka", 7);
+
+    public static final String KAFKA_BATCH_SIZE_BYTES = "kafkaBatchSizeBytes";
+    public int kafkaBatchSizeBytes;
+    public static final Setting<Integer> KAFKA_BATCH_SIZE_BYTES_SETTING =
+            new Setting<>(KAFKA_BATCH_SIZE_BYTES, Platform.KAFKA, (c, s) -> c.kafkaBatchSizeBytes = Integer.parseInt(s), c -> c.kafkaBatchSizeBytes,
+                    "Maximum number of bytes in a Kafka producer batch.",
+                    16384, "CDC_KAFKA_BATCH_SIZE_BYTES", Setting::getEnvAsInteger,
+                    "Integer", "kafka", 8);
+
+    public static final String KAFKA_BUFFER_MEMORY = "kafkaBufferMemory";
+    public long kafkaBufferMemory;
+    public static final Setting<Long> KAFKA_BUFFER_MEMORY_SETTING =
+            new Setting<>(KAFKA_BUFFER_MEMORY, Platform.KAFKA, (c, s) -> c.kafkaBufferMemory = Long.parseLong(s), c -> c.kafkaBufferMemory,
+                    "Total memory in bytes the Kafka producer can use for buffering records.",
+                    33554432L, "CDC_KAFKA_BUFFER_MEMORY", Setting::getEnvAsLong,
+                    "Long", "kafka", 9);
+
+    public static final String KAFKA_COMPRESSION_TYPE = "kafkaCompressionType";
+    public String kafkaCompressionType;
+    public static final Setting<String> KAFKA_COMPRESSION_TYPE_SETTING =
+            new Setting<>(KAFKA_COMPRESSION_TYPE, Platform.KAFKA, (c, s) -> c.kafkaCompressionType = s, c -> c.kafkaCompressionType,
+                    "Compression type for Kafka producer records. One of: none, gzip, snappy, lz4, zstd.",
+                    "none", "CDC_KAFKA_COMPRESSION_TYPE", Setting::getEnvAsString,
+                    "String", "kafka", 10);
+
+    public static final String KAFKA_MAX_BLOCK_MS = "kafkaMaxBlockMs";
+    public long kafkaMaxBlockMs;
+    public static final Setting<Long> KAFKA_MAX_BLOCK_MS_SETTING =
+            new Setting<>(KAFKA_MAX_BLOCK_MS, Platform.KAFKA, (c, s) -> c.kafkaMaxBlockMs = Long.parseLong(s), c -> c.kafkaMaxBlockMs,
+                    "Maximum time in milliseconds the Kafka producer will block when the buffer is full.",
+                    60000L, "CDC_KAFKA_MAX_BLOCK_MS", Setting::getEnvAsLong,
+                    "Long", "kafka", 11);
+
+    public static final String SCHEMA_REGISTRY_BASIC_AUTH_CREDENTIALS_SOURCE = "schemaRegistryBasicAuthCredentialsSource";
+    public String schemaRegistryBasicAuthCredentialsSource;
+    public static final Setting<String> SCHEMA_REGISTRY_BASIC_AUTH_CREDENTIALS_SOURCE_SETTING =
+            new Setting<>(SCHEMA_REGISTRY_BASIC_AUTH_CREDENTIALS_SOURCE, Platform.KAFKA, (c, s) -> c.schemaRegistryBasicAuthCredentialsSource = s, c -> c.schemaRegistryBasicAuthCredentialsSource,
+                    "Source for Schema Registry basic auth credentials. One of: USER_INFO, URL.",
+                    null, "CDC_SR_BASIC_AUTH_CREDENTIALS_SOURCE", Setting::getEnvAsString,
+                    "String", "kafka", 12);
+
+    public static final String SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO = "schemaRegistryBasicAuthUserInfo";
+    public String schemaRegistryBasicAuthUserInfo;
+    public static final Setting<String> SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO_SETTING =
+            new Setting<>(SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO, Platform.KAFKA, (c, s) -> c.schemaRegistryBasicAuthUserInfo = s, c -> c.schemaRegistryBasicAuthUserInfo,
+                    "Schema Registry basic auth credentials in user:password format.",
+                    null, "CDC_SR_BASIC_AUTH_USER_INFO", Setting::getEnvAsString,
+                    "String", "kafka", 13);
+
+    public static final String SCHEMA_REGISTRY_AUTO_REGISTER = "schemaRegistryAutoRegister";
+    public boolean schemaRegistryAutoRegister;
+    public static final Setting<Boolean> SCHEMA_REGISTRY_AUTO_REGISTER_SETTING =
+            new Setting<>(SCHEMA_REGISTRY_AUTO_REGISTER, Platform.KAFKA, (c, s) -> c.schemaRegistryAutoRegister = Boolean.parseBoolean(s), c -> c.schemaRegistryAutoRegister,
+                    "When true, automatically register new Avro schemas with the Schema Registry.",
+                    true, "CDC_SR_AUTO_REGISTER", Setting::getEnvAsBoolean,
+                    "Boolean", "kafka", 14);
+
+    public static final String SCHEMA_REGISTRY_SSL_ENABLED = "schemaRegistrySslEnabled";
+    public boolean schemaRegistrySslEnabled;
+    public static final Setting<Boolean> SCHEMA_REGISTRY_SSL_ENABLED_SETTING =
+            new Setting<>(SCHEMA_REGISTRY_SSL_ENABLED, Platform.KAFKA, (c, s) -> c.schemaRegistrySslEnabled = Boolean.parseBoolean(s), c -> c.schemaRegistrySslEnabled,
+                    "When true, use HTTPS for Schema Registry connections. Reuses sslTruststorePath/sslKeystorePath settings.",
+                    false, "CDC_SR_SSL_ENABLED", Setting::getEnvAsBoolean,
+                    "Boolean", "kafka", 15);
+
+    public static final String KAFKA_TOPIC_AUTO_CREATE = "kafkaTopicAutoCreate";
+    public boolean kafkaTopicAutoCreate;
+    public static final Setting<Boolean> KAFKA_TOPIC_AUTO_CREATE_SETTING =
+            new Setting<>(KAFKA_TOPIC_AUTO_CREATE, Platform.KAFKA, (c, s) -> c.kafkaTopicAutoCreate = Boolean.parseBoolean(s), c -> c.kafkaTopicAutoCreate,
+                    "When true, automatically create Kafka topics via AdminClient before producing.",
+                    false, "CDC_KAFKA_TOPIC_AUTO_CREATE", Setting::getEnvAsBoolean,
+                    "Boolean", "kafka", 16);
+
+    public static final String KAFKA_TOPIC_REPLICATION_FACTOR = "kafkaTopicReplicationFactor";
+    public int kafkaTopicReplicationFactor;
+    public static final Setting<Integer> KAFKA_TOPIC_REPLICATION_FACTOR_SETTING =
+            new Setting<>(KAFKA_TOPIC_REPLICATION_FACTOR, Platform.KAFKA, (c, s) -> c.kafkaTopicReplicationFactor = Integer.parseInt(s), c -> c.kafkaTopicReplicationFactor,
+                    "Replication factor used when auto-creating Kafka topics.",
+                    1, "CDC_KAFKA_TOPIC_REPLICATION_FACTOR", Setting::getEnvAsInteger,
+                    "Integer", "kafka", 17);
+
     public static final Set<Setting<?>> settings;
     public static final Map<String, Setting<?>> settingMap;
 
@@ -352,6 +489,23 @@ public class AgentConfig {
         set.add(PULSAR_AUTH_PLUGIN_CLASS_NAME_SETTING);
         set.add(PULSAR_AUTH_PARAMS_SETTING);
         set.add(PULSAR_MEMORY_LIMIT_BYTES_SETTING);
+        set.add(KAFKA_BOOTSTRAP_SERVERS_SETTING);
+        set.add(SCHEMA_REGISTRY_URL_SETTING);
+        set.add(KAFKA_SECURITY_PROTOCOL_SETTING);
+        set.add(KAFKA_SASL_MECHANISM_SETTING);
+        set.add(KAFKA_SASL_JAAS_CONFIG_SETTING);
+        set.add(KAFKA_ACKS_SETTING);
+        set.add(KAFKA_LINGER_MS_SETTING);
+        set.add(KAFKA_BATCH_SIZE_BYTES_SETTING);
+        set.add(KAFKA_BUFFER_MEMORY_SETTING);
+        set.add(KAFKA_COMPRESSION_TYPE_SETTING);
+        set.add(KAFKA_MAX_BLOCK_MS_SETTING);
+        set.add(SCHEMA_REGISTRY_BASIC_AUTH_CREDENTIALS_SOURCE_SETTING);
+        set.add(SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO_SETTING);
+        set.add(SCHEMA_REGISTRY_AUTO_REGISTER_SETTING);
+        set.add(SCHEMA_REGISTRY_SSL_ENABLED_SETTING);
+        set.add(KAFKA_TOPIC_AUTO_CREATE_SETTING);
+        set.add(KAFKA_TOPIC_REPLICATION_FACTOR_SETTING);
         settings = Collections.unmodifiableSet(set);
 
         Map<String, Setting<?>> map = new HashMap<>();
@@ -385,6 +539,23 @@ public class AgentConfig {
         this.pulsarAuthPluginClassName = PULSAR_AUTH_PLUGIN_CLASS_NAME_SETTING.initDefault();
         this.pulsarAuthParams = PULSAR_AUTH_PARAMS_SETTING.initDefault();
         this.pulsarMemoryLimitBytes = PULSAR_MEMORY_LIMIT_BYTES_SETTING.initDefault();
+        this.kafkaBootstrapServers = KAFKA_BOOTSTRAP_SERVERS_SETTING.initDefault();
+        this.schemaRegistryUrl = SCHEMA_REGISTRY_URL_SETTING.initDefault();
+        this.kafkaSecurityProtocol = KAFKA_SECURITY_PROTOCOL_SETTING.initDefault();
+        this.kafkaSaslMechanism = KAFKA_SASL_MECHANISM_SETTING.initDefault();
+        this.kafkaSaslJaasConfig = KAFKA_SASL_JAAS_CONFIG_SETTING.initDefault();
+        this.kafkaAcks = KAFKA_ACKS_SETTING.initDefault();
+        this.kafkaLingerMs = KAFKA_LINGER_MS_SETTING.initDefault();
+        this.kafkaBatchSizeBytes = KAFKA_BATCH_SIZE_BYTES_SETTING.initDefault();
+        this.kafkaBufferMemory = KAFKA_BUFFER_MEMORY_SETTING.initDefault();
+        this.kafkaCompressionType = KAFKA_COMPRESSION_TYPE_SETTING.initDefault();
+        this.kafkaMaxBlockMs = KAFKA_MAX_BLOCK_MS_SETTING.initDefault();
+        this.schemaRegistryBasicAuthCredentialsSource = SCHEMA_REGISTRY_BASIC_AUTH_CREDENTIALS_SOURCE_SETTING.initDefault();
+        this.schemaRegistryBasicAuthUserInfo = SCHEMA_REGISTRY_BASIC_AUTH_USER_INFO_SETTING.initDefault();
+        this.schemaRegistryAutoRegister = SCHEMA_REGISTRY_AUTO_REGISTER_SETTING.initDefault();
+        this.schemaRegistrySslEnabled = SCHEMA_REGISTRY_SSL_ENABLED_SETTING.initDefault();
+        this.kafkaTopicAutoCreate = KAFKA_TOPIC_AUTO_CREATE_SETTING.initDefault();
+        this.kafkaTopicReplicationFactor = KAFKA_TOPIC_REPLICATION_FACTOR_SETTING.initDefault();
     }
 
     public static void main(String[] args) {

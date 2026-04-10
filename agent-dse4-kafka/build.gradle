@@ -1,0 +1,93 @@
+plugins {
+    id 'java-library'
+    id 'java'
+    id 'application'
+    id "com.github.johnrengelman.shadow"
+}
+
+application {
+    mainClass = "$mainClassName"
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    manifest {
+        attributes 'Premain-Class': "$mainClassName"
+        attributes 'Implementation-Version': project.version
+    }
+    zip64 = true
+}
+
+tasks.jar.dependsOn project(':commons').jar
+tasks.jar.dependsOn project(':agent').jar
+
+compileTestJava {
+    options.compilerArgs += '-parameters'
+}
+
+sourceSets {
+    test.compileClasspath += configurations.compileClasspath
+    test.runtimeClasspath += configurations.compileClasspath
+}
+
+configurations {
+    custom
+}
+
+dependencies {
+    // custom configuration drives what gets shaded into the fat jar
+    custom project(':commons')
+    custom project(':agent')
+    custom("org.apache.kafka:kafka-clients:${kafkaVersion}")
+    custom("io.confluent:kafka-avro-serializer:${confluentVersion}")
+    custom("org.apache.avro:avro:${avroVersion}")
+    custom("com.google.guava:guava:${guavaVersion}")
+
+    implementation project(':commons')
+    implementation project(':agent')
+
+    implementation("org.apache.avro:avro:${avroVersion}")
+    implementation("org.apache.kafka:kafka-clients:${kafkaVersion}")
+    implementation("io.confluent:kafka-avro-serializer:${confluentVersion}")
+    implementation("com.google.guava:guava:${guavaVersion}")
+
+    compileOnly("com.datastax.dse:dse-db:${dse4Version}")
+    testCompileOnly("com.datastax.dse:dse-db:${dse4Version}")
+    testImplementation("com.datastax.dse:dse-db:${dse4Version}") {
+        exclude group: 'io.netty'
+    }
+
+    testImplementation "org.apache.cassandra:java-driver-core:${ossDriverVersion}"
+    testImplementation "org.apache.cassandra:java-driver-query-builder:${ossDriverVersion}"
+
+    testImplementation "org.testcontainers:testcontainers:${testContainersVersion}"
+    testImplementation project(':testcontainers')
+
+    testRuntimeOnly "org.slf4j:slf4j-api:${slf4jVersion}"
+    testRuntimeOnly "ch.qos.logback:logback-classic:${logbackVersion}"
+}
+
+test {
+    dependsOn shadowJar
+    classpath = project.sourceSets.test.output + configurations.testRuntimeClasspath + files(shadowJar.archiveFile)
+    useJUnitPlatform()
+    systemProperty "buildDir", buildDir
+    systemProperty "projectVersion", project.version
+}
+
+shadowJar {
+    manifest {
+        inheritFrom project.tasks.jar.manifest
+    }
+    configurations = [project.configurations.custom]
+    // DSE ships avro 1.7.7 — relocate to avoid version conflict
+    relocate 'org.apache.avro', 'com.datastax.oss.cdc.avro'
+    // Exclude any Pulsar classes that may have been pulled in transitively
+    exclude 'org/apache/pulsar/**'
+    exclude 'com/datastax/oss/cdc/agent/AbstractPulsarMutationSender*'
+    exclude 'com/datastax/oss/cdc/NativeSchemaWrapper*'
+    exclude 'com/datastax/oss/cdc/Murmur3MessageRouter*'
+}
+
+jar.enabled = true
+assemble.dependsOn(shadowJar)

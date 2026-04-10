@@ -9,11 +9,14 @@ configurations {
 dependencies {
     release project(path: ':agent-c3', configuration: 'shadow')
     release project(path: ':agent-c4', configuration: 'shadow')
+    release project(path: ':agent-c4-kafka', configuration: 'shadow')
     if (project.hasProperty("dse4")) {
         release project(path: ':agent-dse4', configuration: 'shadow')
+        release project(path: ':agent-dse4-kafka', configuration: 'shadow')
     }
     if (project.hasProperty("hcd")) {
         release project(path: ':agent-hcd', configuration: 'shadow')
+        release project(path: ':agent-hcd-kafka', configuration: 'shadow')
     }
 }
 
