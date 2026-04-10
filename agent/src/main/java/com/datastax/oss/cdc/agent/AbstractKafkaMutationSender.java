@@ -318,11 +318,9 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
                 new org.apache.avro.generic.GenericData.Record(MUTATION_VALUE_SCHEMA);
         record.put("md5Digest", mv.getMd5Digest());
         record.put("nodeId", mv.getNodeId() != null ? mv.getNodeId().toString() : null);
-        if (mv.getColumns() != null) {
-            record.put("columns", Arrays.asList(mv.getColumns()));
-        } else {
-            record.put("columns", null);
-        }
+        record.put("columns", mv.getColumns() != null
+                ? Arrays.asList(mv.getColumns())
+                : Collections.emptyList());
         return record;
     }
 

@@ -36,7 +36,13 @@ sourceSets {
 }
 
 configurations {
-    custom
+    custom {
+        // Force Apache kafka-clients 3.9.1 over the Confluent-patched 7.6.0-ccs version,
+        // which has SASL handshake incompatibilities with Apache Kafka 4.x brokers.
+        resolutionStrategy {
+            force "org.apache.kafka:kafka-clients:${kafkaVersion}"
+        }
+    }
 }
 
 dependencies {
@@ -99,6 +105,12 @@ shadowJar {
     exclude 'com/datastax/oss/cdc/agent/AbstractPulsarMutationSender*'
     exclude 'com/datastax/oss/cdc/NativeSchemaWrapper*'
     exclude 'com/datastax/oss/cdc/Murmur3MessageRouter*'
+    // Exclude slf4j-api — kafka-clients pulls in slf4j-api 1.7.x (StaticLoggerBinder-based).
+    // HCD ships slf4j-api 2.0.9 + logback-classic 1.4.14 (ServiceLoader-based binding).
+    // Bundling the 1.7.x API causes NOP logger to be selected, silencing all CDC agent logs.
+    dependencies {
+        exclude(dependency('org.slf4j:slf4j-api'))
+    }
 }
 
 jar.enabled = true
