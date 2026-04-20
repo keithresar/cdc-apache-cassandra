@@ -26,8 +26,8 @@ public class MutationMaker extends AbstractMutationMaker<TableMetadata, Mutation
 
     public void createRecord(UUID nodeId, long segment, int position,
                               long tsMicro, Object[] pkValues, BlockingConsumer<Mutation> consumer,
-                              String md5Digest, TableMetadata t, Object token) {
-        Mutation record = new Mutation(nodeId, segment, position, pkValues, tsMicro, md5Digest, t, token);
+                              String md5Digest, TableMetadata t, Object token, MutationType op) {
+        Mutation record = new Mutation(nodeId, segment, position, pkValues, tsMicro, md5Digest, t, token, op);
         try {
             consumer.accept(record);
         }

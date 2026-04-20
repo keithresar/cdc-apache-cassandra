@@ -25,22 +25,22 @@ public abstract class AbstractMutationMaker<T, M> {
     public void insert(UUID node, long segment, int position,
                        long tsMicro, Object[] pkValues, BlockingConsumer<M> consumer,
                        String md5Digest, T t, Object token) {
-        createRecord(node, segment, position, tsMicro, pkValues, consumer, md5Digest, t, token);
+        createRecord(node, segment, position, tsMicro, pkValues, consumer, md5Digest, t, token, MutationType.INSERT);
     }
 
     public void update(UUID node, long segment, int position,
                        long tsMicro, Object[] pkValues, BlockingConsumer<M> consumer,
                        String md5Digest, T t, Object token) {
-        createRecord(node, segment, position, tsMicro, pkValues, consumer, md5Digest, t, token);
+        createRecord(node, segment, position, tsMicro, pkValues, consumer, md5Digest, t, token, MutationType.UPDATE);
     }
 
     public void delete(UUID node, long segment, int position,
                        long tsMicro, Object[] pkValues, BlockingConsumer<M> consumer,
                        String md5Digest, T t, Object token) {
-        createRecord(node, segment, position, tsMicro, pkValues, consumer, md5Digest, t, token);
+        createRecord(node, segment, position, tsMicro, pkValues, consumer, md5Digest, t, token, MutationType.DELETE);
     }
 
     public abstract void createRecord(UUID nodeId, long segment, int position,
                               long tsMicro, Object[] pkValues, BlockingConsumer<M> consumer,
-                              String md5Digest, T t, Object token);
+                              String md5Digest, T t, Object token, MutationType op);
 }

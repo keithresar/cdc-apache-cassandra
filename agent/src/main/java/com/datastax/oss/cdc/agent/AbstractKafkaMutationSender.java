@@ -18,7 +18,6 @@ package com.datastax.oss.cdc.agent;
 import com.datastax.oss.cdc.CqlLogicalTypes;
 import com.datastax.oss.cdc.Constants;
 import com.datastax.oss.cdc.KafkaMurmur3Partitioner;
-import com.datastax.oss.cdc.MutationValue;
 import com.datastax.oss.cdc.agent.exceptions.CassandraConnectorSchemaException;
 import io.confluent.kafka.schemaregistry.avro.AvroSchema;
 import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
@@ -32,11 +31,9 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.io.BinaryEncoder;
 import org.apache.avro.io.EncoderFactory;
-import org.apache.avro.reflect.ReflectData;
 import org.apache.avro.specific.SpecificData;
 import org.apache.avro.specific.SpecificDatumWriter;
 import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -59,8 +56,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Messages are serialized in the Confluent wire format:
  * {@code 0x00 | 4-byte-schema-id (big-endian) | avro-binary-payload}.
  *
- * <p>Cassandra partition tokens are propagated as a Kafka record header ({@code token}) so
- * consumers can implement their own token-aware routing if needed.
+ * <p>The key schema contains only the primary key columns. The value schema contains all
+ * columns (PK + regular + static) so consumers can fully replicate the post-change row state.
+ * For DELETE mutations a Kafka tombstone (null value) is produced with an {@code op=DELETE}
+ * header; INSERT and UPDATE mutations carry the full row as the Avro value.
  */
 @Slf4j
 public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T>, AutoCloseable {
@@ -76,7 +75,7 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
         SpecificData.get().addLogicalTypeConversion(new Conversions.UUIDConversion());
     }
 
-    /** Cached Avro schema + writer for a table's primary key. */
+    /** Cached Avro schema + writer for a given subject. */
     @AllArgsConstructor
     @ToString
     @EqualsAndHashCode
@@ -98,20 +97,13 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
 
     /** key = topic name, value = registered key schema */
     final Map<String, RegisteredSchema> keySchemas = new ConcurrentHashMap<>();
-    /** key = topic name, value = registered value schema */
+    /** key = topic name, value = registered value schema (full row) */
     final Map<String, RegisteredSchema> valueSchemas = new ConcurrentHashMap<>();
     /** key = table key ("keyspace.table"), value = SchemaAndWriter for PK */
     final Map<String, SchemaAndWriter> pkSchemas = new ConcurrentHashMap<>();
 
     final AgentConfig config;
     final boolean useMurmur3Partitioner;
-
-    /** Static Avro schema for {@link MutationValue} — built once at class-load time. */
-    static final Schema MUTATION_VALUE_SCHEMA;
-
-    static {
-        MUTATION_VALUE_SCHEMA = ReflectData.get().getSchema(MutationValue.class);
-    }
 
     public AbstractKafkaMutationSender(AgentConfig config, boolean useMurmur3Partitioner) {
         this.config = config;
@@ -123,6 +115,19 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
     public abstract boolean isSupported(AbstractMutation<T> mutation);
     public abstract void incSkippedMutations();
     public abstract UUID getHostId();
+
+    /**
+     * Build the Avro schema for the complete row (all columns, not just PK).
+     * Called once per table on first send; result is cached in {@code valueSchemas}.
+     */
+    public abstract SchemaAndWriter buildRowAvroSchema(AbstractMutation<T> mutation);
+
+    /**
+     * Fetch the current row from Cassandra and build an Avro {@link GenericRecord}.
+     * Returns {@link Optional#empty()} when the row no longer exists (DELETE case).
+     */
+    public abstract Optional<GenericRecord> fetchAndBuildRowRecord(
+            Schema schema, AbstractMutation<T> mutation);
 
     /** Returns the topic name for the given table. */
     public String topicName(TableInfo tm) {
@@ -194,7 +199,6 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
         log.info("Kafka producer connected to {}", config.kafkaBootstrapServers);
 
         if (config.kafkaTopicAutoCreate) {
-            // AdminClient is created and closed — used here only to validate connectivity
             @SuppressWarnings("try")
             AdminClient adminClient = AdminClient.create(props);
             adminClient.close();
@@ -271,7 +275,7 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
     }
 
     /**
-     * Gets or registers the key schema for the given topic and returns the registered schema info.
+     * Gets or registers the key schema for the given topic.
      */
     private RegisteredSchema getOrRegisterKeySchema(TableInfo tableInfo) {
         String topic = topicName(tableInfo);
@@ -291,37 +295,24 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
     }
 
     /**
-     * Gets or registers the value schema (MutationValue) for the given topic.
+     * Gets or registers the full-row value schema for the given topic.
+     * The schema is built dynamically from the table's column metadata.
      */
-    private RegisteredSchema getOrRegisterValueSchema(TableInfo tableInfo) {
-        String topic = topicName(tableInfo);
+    private RegisteredSchema getOrRegisterValueSchema(AbstractMutation<T> mutation) {
+        String topic = topicName(mutation);
         return valueSchemas.computeIfAbsent(topic, k -> {
+            SchemaAndWriter saw = buildRowAvroSchema(mutation);
             String subject = topic + "-value";
-            SpecificDatumWriter<GenericRecord> writer = new SpecificDatumWriter<>(MUTATION_VALUE_SCHEMA);
             try {
                 int id = config.schemaRegistryAutoRegister
-                        ? schemaRegistryClient.register(subject, new AvroSchema(MUTATION_VALUE_SCHEMA))
-                        : schemaRegistryClient.getId(subject, new AvroSchema(MUTATION_VALUE_SCHEMA));
+                        ? schemaRegistryClient.register(subject, new AvroSchema(saw.schema))
+                        : schemaRegistryClient.getId(subject, new AvroSchema(saw.schema));
                 log.info("Value schema registered for subject={} schemaId={}", subject, id);
-                return new RegisteredSchema(new SchemaAndWriter(MUTATION_VALUE_SCHEMA, writer), id);
+                return new RegisteredSchema(saw, id);
             } catch (Exception e) {
                 throw new RuntimeException("Failed to register value schema for subject " + subject, e);
             }
         });
-    }
-
-    /**
-     * Serializes a MutationValue as an Avro GenericRecord using reflection.
-     */
-    private GenericRecord mutationValueToGenericRecord(MutationValue mv) {
-        org.apache.avro.generic.GenericData.Record record =
-                new org.apache.avro.generic.GenericData.Record(MUTATION_VALUE_SCHEMA);
-        record.put("md5Digest", mv.getMd5Digest());
-        record.put("nodeId", mv.getNodeId() != null ? mv.getNodeId().toString() : null);
-        record.put("columns", mv.getColumns() != null
-                ? Arrays.asList(mv.getColumns())
-                : Collections.emptyList());
-        return record;
     }
 
     private void ensureInitialized() throws Exception {
@@ -352,11 +343,12 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
                     keyReg.schemaAndWriter.writer);
             byte[] keyBytes = toConfluentWireFormat(keyReg.schemaId, keyAvro);
 
-            MutationValue mv = mutation.mutationValue();
-            byte[] valueAvro = serializeAvroGenericRecord(
-                    mutationValueToGenericRecord(mv),
-                    valueReg.schemaAndWriter.writer);
-            byte[] valueBytes = toConfluentWireFormat(valueReg.schemaId, valueAvro);
+            Optional<GenericRecord> rowRecord =
+                    fetchAndBuildRowRecord(valueReg.schemaAndWriter.schema, mutation);
+            byte[] valueBytes = rowRecord
+                    .map(r -> toConfluentWireFormat(valueReg.schemaId,
+                            serializeAvroGenericRecord(r, valueReg.schemaAndWriter.writer)))
+                    .orElse(null); // null = Kafka tombstone for DELETE
 
             String topic = topicName(mutation);
             RecordHeaders headers = new RecordHeaders();
@@ -365,6 +357,8 @@ public abstract class AbstractKafkaMutationSender<T> implements MutationSender<T
                             .getBytes(StandardCharsets.UTF_8));
             headers.add(Constants.TOKEN,
                     mutation.getToken().toString().getBytes(StandardCharsets.UTF_8));
+            headers.add(Constants.MUTATION_OP,
+                    mutation.getOp().name().getBytes(StandardCharsets.UTF_8));
             if (mutation.getTs() != -1) {
                 headers.add(Constants.WRITETIME,
                         String.valueOf(mutation.getTs()).getBytes(StandardCharsets.UTF_8));

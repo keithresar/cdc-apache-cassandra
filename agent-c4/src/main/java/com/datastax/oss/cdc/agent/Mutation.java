@@ -24,8 +24,8 @@ import java.util.UUID;
 
 public class Mutation extends AbstractMutation<TableMetadata> {
 
-    public Mutation(UUID nodeId, Long segment, int position, Object[] pkValues, long tsMicro, String md5Digest, TableMetadata t, Object token) {
-        super(nodeId, segment, position, pkValues, tsMicro, md5Digest, t, token);
+    public Mutation(UUID nodeId, Long segment, int position, Object[] pkValues, long tsMicro, String md5Digest, TableMetadata t, Object token, MutationType op) {
+        super(nodeId, segment, position, pkValues, tsMicro, md5Digest, t, token, op);
     }
 
     @Override

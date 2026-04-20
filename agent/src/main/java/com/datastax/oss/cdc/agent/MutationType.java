@@ -13,26 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.datastax.oss.cdc;
+package com.datastax.oss.cdc.agent;
 
-public class Constants {
-    /**
-     * Writetime message property name.
-     */
-    public static final String WRITETIME = "writetime";
-
-    /**
-     * Commitlog segment id and position message property name.
-     */
-    public static final String SEGMENT_AND_POSITION = "segpos";
-
-    /**
-     * Cassandra partition token property name.
-     */
-    public static final String TOKEN = "token";
-
-    /**
-     * Mutation operation type header (INSERT, UPDATE, or DELETE).
-     */
-    public static final String MUTATION_OP = "op";
+public enum MutationType {
+    INSERT,
+    UPDATE,
+    DELETE
 }

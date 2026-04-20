@@ -38,6 +38,7 @@ public abstract class AbstractMutation<T> implements TableInfo {
     private String md5Digest;
     protected T metadata;
     private Object token;
+    private MutationType op;
 
     public abstract String key();
     public abstract String name();

@@ -226,7 +226,8 @@ public class PulsarImporter {
                 pkValues, tsMicro,
                 MUTATION_DIGEST,
                 tableMetadata,
-                MUTATION_TOKEN);
+                MUTATION_TOKEN,
+                com.datastax.oss.cdc.agent.MutationType.INSERT);
     }
 
     private void printSummary(long recordsCount) {

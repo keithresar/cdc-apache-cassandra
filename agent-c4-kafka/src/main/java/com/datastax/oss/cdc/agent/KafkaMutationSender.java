@@ -16,81 +16,68 @@
 package com.datastax.oss.cdc.agent;
 
 import com.datastax.oss.cdc.CqlLogicalTypes;
+import com.datastax.oss.cdc.agent.exceptions.CassandraConnectorSchemaException;
 import com.google.common.collect.ImmutableMap;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.specific.SpecificDatumWriter;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.ColumnIdentifier;
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.AsciiType;
-import org.apache.cassandra.db.marshal.BooleanType;
-import org.apache.cassandra.db.marshal.ByteType;
-import org.apache.cassandra.db.marshal.BytesType;
-import org.apache.cassandra.db.marshal.DecimalType;
-import org.apache.cassandra.db.marshal.DoubleType;
-import org.apache.cassandra.db.marshal.DurationType;
-import org.apache.cassandra.db.marshal.FloatType;
-import org.apache.cassandra.db.marshal.InetAddressType;
-import org.apache.cassandra.db.marshal.Int32Type;
-import org.apache.cassandra.db.marshal.IntegerType;
-import org.apache.cassandra.db.marshal.LongType;
-import org.apache.cassandra.db.marshal.ReversedType;
-import org.apache.cassandra.db.marshal.ShortType;
-import org.apache.cassandra.db.marshal.SimpleDateType;
-import org.apache.cassandra.db.marshal.TimeType;
-import org.apache.cassandra.db.marshal.TimeUUIDType;
-import org.apache.cassandra.db.marshal.TimestampType;
-import org.apache.cassandra.db.marshal.UTF8Type;
-import org.apache.cassandra.db.marshal.UUIDType;
+import org.apache.cassandra.cql3.QueryProcessor;
+import org.apache.cassandra.cql3.UntypedResultSet;
+import org.apache.cassandra.db.marshal.*;
 import org.apache.cassandra.dht.Murmur3Partitioner;
 import org.apache.cassandra.schema.ColumnMetadata;
 import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.service.StorageService;
 
 import java.net.InetAddress;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Date;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Kafka-backed {@link MutationSender} for Apache Cassandra 4.x.
  *
- * <p>Type mapping, CQL-to-Avro conversion, and supported-column detection are identical
- * to the Pulsar counterpart ({@code agent-c4/PulsarMutationSender}) — only the transport
- * layer differs.
+ * <p>Implements the single-stage pattern: reads the commit log, fetches the current full row
+ * from Cassandra via internal query APIs, and publishes the complete Avro-encoded row to Kafka.
+ * DELETE mutations produce a Kafka tombstone (null value) with an {@code op=DELETE} header.
  */
 @Slf4j
 public class KafkaMutationSender extends AbstractKafkaMutationSender<TableMetadata> {
 
-    private static final ImmutableMap<String, org.apache.avro.Schema> AVRO_SCHEMA_TYPES =
-            ImmutableMap.<String, org.apache.avro.Schema>builder()
+    private static final ImmutableMap<String, Schema> AVRO_SCHEMA_TYPES =
+            ImmutableMap.<String, Schema>builder()
                     .put(UTF8Type.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING))
+                            Schema.create(Schema.Type.STRING))
                     .put(AsciiType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING))
+                            Schema.create(Schema.Type.STRING))
                     .put(BooleanType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.BOOLEAN))
+                            Schema.create(Schema.Type.BOOLEAN))
                     .put(BytesType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.BYTES))
+                            Schema.create(Schema.Type.BYTES))
                     .put(ByteType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.INT))   // INT8 not supported by Avro
+                            Schema.create(Schema.Type.INT))
                     .put(ShortType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.INT))   // INT16 not supported by Avro
+                            Schema.create(Schema.Type.INT))
                     .put(Int32Type.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.INT))
+                            Schema.create(Schema.Type.INT))
                     .put(IntegerType.instance.asCQL3Type().toString(), CqlLogicalTypes.varintType)
                     .put(LongType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.LONG))
+                            Schema.create(Schema.Type.LONG))
                     .put(FloatType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.FLOAT))
+                            Schema.create(Schema.Type.FLOAT))
                     .put(DoubleType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.DOUBLE))
+                            Schema.create(Schema.Type.DOUBLE))
                     .put(DecimalType.instance.asCQL3Type().toString(), CqlLogicalTypes.decimalType)
                     .put(InetAddressType.instance.asCQL3Type().toString(),
-                            org.apache.avro.Schema.create(org.apache.avro.Schema.Type.STRING))
+                            Schema.create(Schema.Type.STRING))
                     .put(TimestampType.instance.asCQL3Type().toString(), CqlLogicalTypes.timestampMillisType)
                     .put(SimpleDateType.instance.asCQL3Type().toString(), CqlLogicalTypes.dateType)
                     .put(TimeType.instance.asCQL3Type().toString(), CqlLogicalTypes.timeMicrosType)
@@ -118,7 +105,7 @@ public class KafkaMutationSender extends AbstractKafkaMutationSender<TableMetada
     }
 
     @Override
-    public org.apache.avro.Schema getNativeSchema(String cql3Type) {
+    public Schema getNativeSchema(String cql3Type) {
         return AVRO_SCHEMA_TYPES.get(cql3Type);
     }
 
@@ -143,34 +130,308 @@ public class KafkaMutationSender extends AbstractKafkaMutationSender<TableMetada
         AbstractType<?> type = columnMetadata.type.isReversed()
                 ? ((ReversedType<?>) columnMetadata.type).baseType
                 : columnMetadata.type;
-        log.trace("column name={} type={} class={} value={}",
-                columnMetadata.name, type.getClass().getName(),
-                value != null ? value.getClass().getName() : null, value);
+        return convertToAvro(type, null, value);
+    }
 
+    // -------------------------------------------------------------------------
+    // Full-row schema building
+    // -------------------------------------------------------------------------
+
+    @Override
+    public SchemaAndWriter buildRowAvroSchema(AbstractMutation<TableMetadata> mutation) {
+        TableMetadata tm = mutation.metadata;
+        List<Schema.Field> fields = new ArrayList<>();
+
+        Iterator<ColumnMetadata> colIt = tm.allColumnsInSelectOrder();
+        while (colIt.hasNext()) {
+            ColumnMetadata cm = colIt.next();
+            AbstractType<?> rawType = cm.type.isReversed()
+                    ? ((ReversedType<?>) cm.type).baseType : cm.type;
+            Schema fieldSchema = buildColumnSchema(rawType);
+            // Non-partition-key columns are nullable
+            if (!cm.isPartitionKey()) {
+                fieldSchema = Schema.createUnion(Schema.create(Schema.Type.NULL), fieldSchema);
+            }
+            fields.add(new Schema.Field(cm.name.toString(), fieldSchema));
+        }
+
+        Schema avroSchema = Schema.createRecord(
+                mutation.key(), "Full row schema for " + mutation.key(),
+                mutation.name(), false, fields);
+        return new SchemaAndWriter(avroSchema, new SpecificDatumWriter<>(avroSchema));
+    }
+
+    /**
+     * Recursively builds the Avro schema for a Cassandra column type.
+     * Handles primitives, collections, UDTs, and tuples.
+     */
+    Schema buildColumnSchema(AbstractType<?> type) {
+        if (type instanceof ReversedType) {
+            type = ((ReversedType<?>) type).baseType;
+        }
+
+        // Primitives: reuse existing map
+        Schema primitive = AVRO_SCHEMA_TYPES.get(type.asCQL3Type().toString());
+        if (primitive != null) return primitive;
+
+        if (type instanceof ListType<?>) {
+            Schema elementSchema = buildColumnSchema(((ListType<?>) type).getElementsType());
+            return Schema.createArray(elementSchema);
+        }
+        if (type instanceof SetType<?>) {
+            Schema elementSchema = buildColumnSchema(((SetType<?>) type).getElementsType());
+            return Schema.createArray(elementSchema);
+        }
+        if (type instanceof MapType<?, ?>) {
+            // Avro maps require string keys; non-string keys are stringified on write
+            Schema valueSchema = buildColumnSchema(((MapType<?, ?>) type).getValuesType());
+            return Schema.createMap(valueSchema);
+        }
+        // UserType extends TupleType in C* 4.x — check UserType first
+        if (type instanceof UserType) {
+            return buildUdtSchema((UserType) type);
+        }
+        if (type instanceof TupleType) {
+            return buildTupleSchema((TupleType) type);
+        }
+
+        throw new CassandraConnectorSchemaException(
+                "Unsupported column type for Avro schema: " + type.asCQL3Type());
+    }
+
+    private Schema buildUdtSchema(UserType udt) {
+        String fullName = (udt.keyspace + "_" + udt.getNameAsString()).replace('.', '_');
+        List<Schema.Field> fields = new ArrayList<>();
+        for (int i = 0; i < udt.size(); i++) {
+            AbstractType<?> fieldType = udt.type(i);
+            Schema fs = Schema.createUnion(
+                    Schema.create(Schema.Type.NULL),
+                    buildColumnSchema(fieldType));
+            fields.add(new Schema.Field(udt.fieldName(i).toString(), fs));
+        }
+        return Schema.createRecord(fullName, "UDT " + udt.getNameAsString(), udt.keyspace, false, fields);
+    }
+
+    private Schema buildTupleSchema(TupleType tuple) {
+        String name = "tuple_" + Math.abs(tuple.toString().hashCode());
+        List<Schema.Field> fields = new ArrayList<>();
+        for (int i = 0; i < tuple.size(); i++) {
+            Schema fs = Schema.createUnion(
+                    Schema.create(Schema.Type.NULL),
+                    buildColumnSchema(tuple.type(i)));
+            fields.add(new Schema.Field("field" + i, fs));
+        }
+        return Schema.createRecord(name, "Tuple", "", false, fields);
+    }
+
+    // -------------------------------------------------------------------------
+    // Row fetching
+    // -------------------------------------------------------------------------
+
+    @Override
+    public Optional<GenericRecord> fetchAndBuildRowRecord(
+            Schema schema, AbstractMutation<TableMetadata> mutation) {
+
+        if (mutation.getOp() == MutationType.DELETE) {
+            return Optional.empty();
+        }
+
+        TableMetadata tm = mutation.metadata;
+
+        // Build parameterized SELECT statement
+        StringBuilder cql = new StringBuilder("SELECT * FROM ")
+                .append('"').append(tm.keyspace).append('"')
+                .append('.')
+                .append('"').append(tm.name).append('"')
+                .append(" WHERE ");
+        List<Object> params = new ArrayList<>();
+        boolean first = true;
+        int pkIdx = 0;
+        for (ColumnMetadata cm : tm.partitionKeyColumns()) {
+            if (!first) cql.append(" AND ");
+            cql.append('"').append(cm.name).append('"').append("=?");
+            params.add(mutation.getPkValues()[pkIdx++]);
+            first = false;
+        }
+        for (ColumnMetadata cm : tm.clusteringColumns()) {
+            if (pkIdx >= mutation.getPkValues().length) break;
+            Object val = mutation.getPkValues()[pkIdx++];
+            if (val != null) {
+                cql.append(" AND ").append('"').append(cm.name).append('"').append("=?");
+                params.add(val);
+            }
+        }
+
+        UntypedResultSet rs;
+        try {
+            rs = QueryProcessor.executeInternal(cql.toString(), params.toArray());
+        } catch (Exception e) {
+            log.warn("Failed to fetch row for mutation key={}: {}", mutation.key(), e.getMessage());
+            return Optional.empty();
+        }
+
+        if (rs == null || rs.isEmpty()) {
+            return Optional.empty();
+        }
+
+        UntypedResultSet.Row row = rs.one();
+        GenericRecord record = new GenericData.Record(schema);
+
+        Iterator<ColumnMetadata> colIt = tm.allColumnsInSelectOrder();
+        while (colIt.hasNext()) {
+            ColumnMetadata cm = colIt.next();
+            String name = cm.name.toString();
+            Schema fieldSchema = schema.getField(name).schema();
+            // Unwrap nullable union to get the actual type schema
+            Schema actualSchema = fieldSchema.getType() == Schema.Type.UNION
+                    ? fieldSchema.getTypes().get(1)
+                    : fieldSchema;
+
+            AbstractType<?> type = cm.type.isReversed()
+                    ? ((ReversedType<?>) cm.type).baseType : cm.type;
+
+            if (!row.has(name)) {
+                record.put(name, null);
+                continue;
+            }
+
+            // getBlob() returns the raw ByteBuffer for any column type in UntypedResultSet.Row
+            ByteBuffer raw = row.getBlob(name);
+            if (raw == null || !raw.hasRemaining()) {
+                record.put(name, null);
+                continue;
+            }
+
+            Object composed = type.compose(raw.duplicate());
+            record.put(name, convertToAvro(type, actualSchema, composed));
+        }
+
+        return Optional.of(record);
+    }
+
+    // -------------------------------------------------------------------------
+    // CQL → Avro value conversion
+    // -------------------------------------------------------------------------
+
+    /**
+     * Converts a composed Cassandra value to its Avro representation.
+     *
+     * @param type       the Cassandra AbstractType (unwrapped, not reversed)
+     * @param avroSchema the Avro schema for this value (non-union, the actual type schema)
+     * @param value      the Java object returned by {@code type.compose()}
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    Object convertToAvro(AbstractType<?> type, Schema avroSchema, Object value) {
         if (value == null) return null;
 
+        if (type instanceof ReversedType) {
+            type = ((ReversedType<?>) type).baseType;
+        }
+
+        // Timestamp: Date or Instant → epoch millis (long)
         if (type instanceof TimestampType) {
             if (value instanceof Date) return ((Date) value).getTime();
             if (value instanceof Instant) return ((Instant) value).toEpochMilli();
         }
+        // Date: Cassandra stores days-since-epoch with MIN_VALUE offset; convert to epoch day
         if (type instanceof SimpleDateType && value instanceof Integer) {
             long timeInMillis = Duration.ofDays((Integer) value + Integer.MIN_VALUE).toMillis();
             Instant instant = Instant.ofEpochMilli(timeInMillis);
             LocalDate localDate = LocalDateTime.ofInstant(instant, ZoneOffset.UTC).toLocalDate();
             return (int) localDate.toEpochDay();
         }
+        // Time: nanos → micros
         if (type instanceof TimeType && value instanceof Long) {
-            return ((Long) value / 1000); // Avro time-micros
+            return ((Long) value / 1000);
         }
         if (type instanceof InetAddressType) {
             return ((InetAddress) value).getHostAddress();
         }
         if (type instanceof ByteType) {
-            return Byte.toUnsignedInt((byte) value); // Avro INT, not INT8
+            return Byte.toUnsignedInt((byte) value);
         }
         if (type instanceof ShortType) {
-            return Short.toUnsignedInt((short) value); // Avro INT, not INT16
+            return Short.toUnsignedInt((short) value);
         }
+
+        // Collections: compose() returns List/Set/Map with already-composed elements
+        if (type instanceof ListType<?> || type instanceof SetType<?>) {
+            AbstractType<?> elementType = (type instanceof ListType<?>)
+                    ? ((ListType<?>) type).getElementsType()
+                    : ((SetType<?>) type).getElementsType();
+            Collection<?> collection = (Collection<?>) value;
+            Schema elementSchema = avroSchema != null ? avroSchema.getElementType() : null;
+            List<Object> avroList = new ArrayList<>(collection.size());
+            for (Object elem : collection) {
+                avroList.add(convertToAvro(elementType, elementSchema, elem));
+            }
+            return avroSchema != null
+                    ? new GenericData.Array<>(avroSchema, avroList)
+                    : avroList;
+        }
+        if (type instanceof MapType<?, ?>) {
+            MapType<?, ?> mt = (MapType<?, ?>) type;
+            Map<?, ?> map = (Map<?, ?>) value;
+            Schema valueSchema = avroSchema != null ? avroSchema.getValueType() : null;
+            Map<String, Object> avroMap = new LinkedHashMap<>(map.size());
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                String key = entry.getKey() != null ? entry.getKey().toString() : "null";
+                avroMap.put(key, convertToAvro(mt.getValuesType(), valueSchema, entry.getValue()));
+            }
+            return avroMap;
+        }
+
+        // UserType: compose() returns ByteBuffer (raw UDT bytes); split and recurse
+        if (type instanceof UserType) {
+            UserType udt = (UserType) type;
+            ByteBuffer rawUdt = (ByteBuffer) value;
+            ByteBuffer[] fieldBufs = udt.split(rawUdt);
+            Schema udtSchema = avroSchema != null ? avroSchema : buildUdtSchema(udt);
+            GenericData.Record udtRecord = new GenericData.Record(udtSchema);
+            for (int i = 0; i < udt.size(); i++) {
+                String fieldName = udt.fieldName(i).toString();
+                if (i < fieldBufs.length && fieldBufs[i] != null && fieldBufs[i].hasRemaining()) {
+                    AbstractType<?> fieldType = udt.type(i);
+                    Schema fieldSchema = getUnionInnerSchema(udtSchema, fieldName);
+                    Object fieldVal = fieldType.compose(fieldBufs[i].duplicate());
+                    udtRecord.put(fieldName, convertToAvro(fieldType, fieldSchema, fieldVal));
+                } else {
+                    udtRecord.put(fieldName, null);
+                }
+            }
+            return udtRecord;
+        }
+
+        // TupleType: compose() returns ByteBuffer; split positional fields
+        if (type instanceof TupleType) {
+            TupleType tuple = (TupleType) type;
+            ByteBuffer rawTuple = (ByteBuffer) value;
+            ByteBuffer[] fieldBufs = tuple.split(rawTuple);
+            Schema tupleSchema = avroSchema != null ? avroSchema : buildTupleSchema(tuple);
+            GenericData.Record tupleRecord = new GenericData.Record(tupleSchema);
+            for (int i = 0; i < tuple.size(); i++) {
+                String fieldName = "field" + i;
+                if (i < fieldBufs.length && fieldBufs[i] != null && fieldBufs[i].hasRemaining()) {
+                    AbstractType<?> fieldType = tuple.type(i);
+                    Schema fieldSchema = getUnionInnerSchema(tupleSchema, fieldName);
+                    Object fieldVal = fieldType.compose(fieldBufs[i].duplicate());
+                    tupleRecord.put(fieldName, convertToAvro(fieldType, fieldSchema, fieldVal));
+                } else {
+                    tupleRecord.put(fieldName, null);
+                }
+            }
+            return tupleRecord;
+        }
+
+        // Pass-through for remaining primitives (UUID, String, Long, BigInteger, BigDecimal, etc.)
         return value;
+    }
+
+    /** Returns the non-null branch of a UNION[null, type] field schema. */
+    private static Schema getUnionInnerSchema(Schema recordSchema, String fieldName) {
+        Schema.Field field = recordSchema.getField(fieldName);
+        if (field == null) return null;
+        Schema fs = field.schema();
+        return fs.getType() == Schema.Type.UNION ? fs.getTypes().get(1) : fs;
     }
 }
